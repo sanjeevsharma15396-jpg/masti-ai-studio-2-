@@ -1,0 +1,73 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+  JAVA_VERSION: '21'
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Require deployed HTTPS API URL
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "Repository variable API_BASE_URL is missing. Deploy the Express API over HTTPS first, then add API_BASE_URL in Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+          case "$API_BASE_URL" in
+            https://*) ;;
+            *) echo "API_BASE_URL must start with https://"; exit 1 ;;
+          esac
+          echo "VITE_API_BASE_URL=$API_BASE_URL" >> "$GITHUB_ENV"
+
+      - name: Build web application
+        run: npm run build
+
+      - name: Add Android platform if not present
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: masti-ai-studio-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
